@@ -137,5 +137,3 @@ Contribuições são bem-vindas! Sinta-se à vontade para abrir *Issues* ou envi
 Este projeto está sob a licença [MIT](LICENSE)
 
 ```
-
-```
