@@ -1,0 +1,22 @@
+# Manipulação de Dados e Arquivos
+pandas
+openpyxl
+python-docx
+PyMuPDF
+
+# IA e Processamento de Linguagem Natural
+spacy
+presidio-analyzer
+presidio-anonymizer
+faker
+
+# Segurança e Criptografia
+cryptography
+argon2-cffi
+
+# Visão Computacional (OCR)
+opencv-python
+pytesseract
+
+# Testes
+pytest

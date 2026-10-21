@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Dados de teste e saídas (para não poluir o repo)
+data/*.xlsx
+data/*.csv
+data/*.docx
+data/*.pdf
+output/
+cofre/
+*.key
+
+# Sistema Operacional
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
