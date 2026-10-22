@@ -1,73 +1,137 @@
 # src/core/test_integration.py
 
-import os
 from src.readers.excel_reader import ExcelReader
 from src.detectors.regex_detector import RegexDetector
+from src.detectors.nlp_detector import NLPDetector
 from src.anonymizers.anonymizer import Anonymizer
+
+
+def merge_findings(regex_findings: list, nlp_findings: list) -> list:
+    """
+    Consolida as detecções determinísticas (RegEx) e estocásticas (IA/NLP), resolvendo conflitos 
+    de sobreposição de intervalos (Interval Overlap / Boundary Collision Resolution).
+
+    Args:
+        regex_findings (list[dict]): Lista de ocorrências capturadas pelo RegexDetector.
+        nlp_findings (list[dict]): Lista de ocorrências capturadas pelo NLPDetector.
+
+    Returns:
+        list[dict]: Lista unificada e não sobreposta de achados, pronta para o anonimizador.
+
+    Algoritmo de Resolução de Conflitos:
+    1. Unificação & Ordenação Primária: O(K log K), onde K = total de achados.
+       Ordena as janelas de texto pelo índice inicial (`start`) e, em caso de empate, pelo término (`end`).
+    2. Algoritmo Guloso de Fusão de Intervalos (Greedy Interval Merging): O(K).
+       Percorre os intervalos sequencialmente mantendo um estado no array `merged`.
+    3. Regra de Cobertura Máxima (Longest Match Rule):
+       Havendo interseção (`current['start'] < last['end']`), o algoritmo prioriza o achado com 
+       maior amplitude de caracteres (`end - start`), substituindo o intervalo menor.
+    """
+    # Combina as duas coleções de achados
+    all_findings = regex_findings + nlp_findings
+    
+    # Ordena primariamente pelo índice de início e secundariamente pelo índice final
+    all_findings.sort(key=lambda x: (x['start'], x['end']))
+    
+    merged = []
+    for current in all_findings:
+        if not merged:
+            merged.append(current)
+        else:
+            last = merged[-1]
+            # Condição de sobreposição: o elemento atual começa antes do término do anterior
+            if current['start'] < last['end']:
+                # Critério de desempate: mantemos a entidade que possui a maior área de cobertura textual
+                if (current['end'] - current['start']) > (last['end'] - last['start']):
+                    merged[-1] = current
+            else:
+                # Intervalos adjacentes ou disjuntos são aceitos diretamente
+                merged.append(current)
+                
+    return merged
 
 
 def run_pipeline():
     """
-    Orquestra o pipeline completo de Leitura, Detecção, Sanitização e Persistência de Dados Sensíveis (PII).
+    Orquestra a pipeline híbrida avançada de auditoria, unificando inspeção determinística (RegEx) 
+    e Inteligência Artificial (NLP/NER) para higienização e persistência de dados sensíveis.
 
-    Arquitetura da Pipeline (ETL / Masking & Persistence):
-    1. Ingestão (Extract): Leitura e mapeamento de células via `ExcelReader`.
-    2. Inspeção (Detect): Varredura das células por expressões regulares via `RegexDetector`.
-    3. Transformação (Transform): Substituição de dados sensíveis via `Anonymizer`.
-    4. Atualização em Memória (Update): Modificação da árvore de dados (DOM do openpyxl) via `update_cell`.
-    5. Persistência (Load / Export): Salvamento em um novo arquivo físico via `save`.
+    Arquitetura da Pipeline (Hybrid ETL / AI-Driven Masking):
+    1. Ingestão (Extract): Leitura da estrutura da planilha e extração de células textuais.
+    2. Detecção RegEx (Fast Path): Busca rápida por padrões estruturados (CPF, CNPJ, E-mail, CEP, Telefone).
+    3. Detecção NLP (Slow Path): Inferência por redes neurais/spaCy para entidades não estruturadas (PERSON, LOCATION).
+    4. Resolução de Conflitos (Merge): Fusão de janelas de texto sobrepostas via `merge_findings`.
+    5. Mutação em Memória (Transform): Substituição por dados sintéticos (`Faker`) e atualização da DOM.
+    6. Persistência (Load): Exportação para novo arquivo seguro.
     """
-    # Definição dos caminhos para arquivos de entrada e saída
+    # Definição dos caminhos para a fonte de dados e o arquivo final sanitizado com IA
     caminho_arquivo = "data/teste.xlsx"
-    # Definição de um novo caminho para garantir a imutabilidade da fonte de dados original
-    caminho_saida = "data/teste_sanitizado.xlsx" 
+    caminho_saida = "data/teste_sanitizado_com_ia.xlsx" 
     
-    print(f"🔍 Iniciando higienização de: {caminho_arquivo}")
+    print(f"🔍 Iniciando higienização com IA em: {caminho_arquivo}")
+    print("⏳ Carregando modelos de IA (isso pode levar alguns segundos)...")
     
     # ------------------------------------------------------------------------------
-    # Inicialização dos Módulos e Componentes do Sistema
+    # Inicialização do Ecossistema de Módulos (Híbrido: RegEx + NLP + Strategy)
     # ------------------------------------------------------------------------------
     leitor = ExcelReader(caminho_arquivo)
-    detector = RegexDetector()
-    # Injeção da estratégia "faker" para substituição por dados sintéticos realistas
+    regex_detector = RegexDetector()
+    nlp_detector = NLPDetector()
     anonimizador = Anonymizer(strategy="faker")
 
-    # Ingestão de dados: Extrai a lista de células com dados textuais
+    # Ingestão de dados: Extração de todas as células textuais da planilha
     celulas = leitor.read_all_cells()
-    # Acumulador para métricas do relatório de auditoria
     total_alteracoes = 0
     
     # ------------------------------------------------------------------------------
-    # Ciclo de Inspeção e Mutação em Memória
-    #
-    # Complexidade de Tempo: O(C * R + C * A)
-    # Onde C = número de células, R = regras de regex, A = tempo de anonimização por célula.
+    # Processamento e Inspeção Híbrida Célula a Célula
     # ------------------------------------------------------------------------------
-    for celula in celulas:
+    for i, celula in enumerate(celulas):
         texto_original = celula['text']
-        # Identifica ocorrências de PII no texto da célula atual
-        achados = detector.detect(texto_original)
         
-        # Se houver dados sensíveis identificados
-        if achados:
-            # Gera o novo texto sanitizado aplicando os dados falsos/máscaras
-            texto_limpo = anonimizador.anonymize_text(texto_original, achados)
+        # Otimização de Performance (Short-Circuit Guard Clause):
+        # Descarta células vazias ou textos irrelevantes (< 3 caracteres) para evitar chamadas de IA desnecessárias
+        if not texto_original or len(texto_original) < 3:
+            continue
+
+        # 1. Execução do Fast Path: Análise determinística por Expressões Regulares (Baixo overhead de CPU)
+        achados_regex = regex_detector.detect(texto_original)
+        
+        # 2. Execução do Slow Path: Processamento de IA / NLP (Alto overhead de GPU/CPU)
+        # Otimização Domain-Specific: Ignora a linha 1 (cabeçalhos/headers) para otimizar tempo de execução
+        if celula['row'] > 1: 
+            achados_nlp = nlp_detector.detect(texto_original)
+        else:
+            achados_nlp = []
+
+        # 3. Consolidação e Resolução de Conflitos entre RegEx e NLP
+        achados_finais = merge_findings(achados_regex, achados_nlp)
+        
+        # 4. Mutação e Atualização de Célula
+        if achados_finais:
+            # Substitui os dados identificados pela estratégia Faker
+            texto_limpo = anonimizador.anonymize_text(texto_original, achados_finais)
             
-            # Atualiza o valor diretamente na estrutura em memória do workbook (openpyxl)
+            # Atualiza a árvore DOM do openpyxl em memória
             leitor.update_cell(
                 sheet_name=celula['sheet'], 
                 coordinate=celula['coordinate'], 
                 new_value=texto_limpo
             )
             total_alteracoes += 1
+            
+            # Amostragem defensiva: limita a exibição visual às 5 primeiras células modificadas
+            if total_alteracoes <= 5:
+                print(f"\n📍 Célula {celula['coordinate']}:")
+                print(f"   Original: {texto_original}")
+                print(f"   Sanitizado: {texto_limpo}")
 
     # ------------------------------------------------------------------------------
-    # Persistência do Novo Arquivo (Disk Write Step)
+    # Gravando no Disco o Resultado Sanitizado
     # ------------------------------------------------------------------------------
-    # Salva a árvore DOM modificada em um novo arquivo sem alterar a planilha original
     leitor.save(caminho_saida)
     
-    print(f"\n✅ PROCESSO CONCLUÍDO!")
+    print(f"\n✅ PROCESSO CONCLUÍDO COM IA!")
     print(f"Total de células higienizadas: {total_alteracoes}")
     print(f"Arquivo seguro gerado em: {caminho_saida}")
 

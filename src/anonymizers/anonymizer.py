@@ -5,7 +5,8 @@ from faker import Faker
 
 class Anonymizer:
     """
-    Motor responsável pelas estratégias de anonimização, mascaramento e substituição de Dados Sensíveis (PII).
+    Motor responsável pelas estratégias de anonimização, mascaramento e substituição de Dados Sensíveis (PII),
+    dando suporte tanto a entidades estruturadas (RegEx) quanto a entidades não estruturadas de IA/NLP (NER).
 
     Decisão de Arquitetura (Design Pattern):
     - Implementa uma variação do Strategy Pattern, permitindo alternar dinamicamente entre diferentes 
@@ -22,7 +23,7 @@ class Anonymizer:
 
         Detalhes de Implementação:
         - `self.fake`: Instancia a biblioteca `Faker` configurada explicitamente para o locale brasileiro (`pt_BR`), 
-          garantindo que CPFs, CNPJs, CEPs e e-mails gerados estejam em conformidade com o padrão nacional.
+          garantindo que dados sintéticos gerados estejam em conformidade com o contexto nacional.
         """
         self.strategy = strategy
         self.fake = Faker('pt_BR')  # Inicializa o Faker em português (locale pt_BR)
@@ -35,20 +36,21 @@ class Anonymizer:
             text (str): O texto original da entidade sensível.
 
         Returns:
-            str: Uma string de asteriscos (`*`) com exatamente o mesmo comprimento do texto original,
+            str: String de asteriscos (`*`) com o mesmo comprimento do texto original, 
                  preservando a volumetria visual do dado mascarado.
         """
         return "*" * len(text)
 
     def _generate_fake(self, entity_type: str) -> str:
         """
-        Gera dados sintéticos e realistas baseados na categoria da entidade sensível.
+        Gera dados sintéticos e realistas baseados na categoria da entidade sensível,
+        abrangendo tanto dados tabulares/padrão quanto entidades extraídas via NLP/NER.
 
         Args:
-            entity_type (str): O tipo da entidade (ex: 'CPF', 'EMAIL', 'TELEFONE').
+            entity_type (str): O tipo da entidade (ex: 'CPF', 'EMAIL', 'PERSON', 'LOCATION').
 
         Returns:
-            str: Um dado sintético gerado pela biblioteca Faker ou uma tag de fallback.
+            str: O dado sintético gerado ou uma tag de fallback estruturada.
         """
         if entity_type == "CPF":
             return self.fake.cpf()
@@ -57,11 +59,20 @@ class Anonymizer:
         elif entity_type == "EMAIL":
             return self.fake.email()
         elif entity_type == "TELEFONE":
-            # Tratamento customizado: garante a padronização visual consistente para telefones brasileiros
+            # Formatação controlada para garantir consistência visual de telefones brasileiros
             return f"({self.fake.random_int(min=11, max=99)}) 9{self.fake.random_int(min=1000, max=9999)}-{self.fake.random_int(min=1000, max=9999)}"
         elif entity_type == "CEP":
             return self.fake.postcode()
         
+        # --- NOVOS TIPOS PARA A FASE DE IA (NLP / NER) ---
+        elif entity_type == "PERSON":
+            # Gera um nome completo fictício baseado no locale pt_BR
+            return self.fake.name()
+        elif entity_type == "LOCATION":
+            # Tratamento de Sanitização Secundária: O Faker gera endereços contendo quebras de linha e barras.
+            # Removemos quebras de linha substituindo por vírgulas e limpamos barras para adequação de linha única.
+            return self.fake.address().replace('\n', ', ').replace('/', '')
+            
         # Padrão de Guard Clause / Fallback para tipos de entidades não mapeados
         return "[DADO_OCULTADO]"
 
@@ -71,19 +82,19 @@ class Anonymizer:
 
         Args:
             text (str): O texto original completo onde os achados foram identificados.
-            findings (list[dict]): Lista contendo os metadados dos achados (incluindo 'start', 'end' e 'entity_type').
+            findings (list[dict]): Lista contendo os metadados dos achados ('start', 'end', 'entity_type').
 
         Returns:
             str: O texto processado com os dados sensíveis devidamente anonimizados.
 
         Algoritmo Crítico e Manipulação de Estruturas de Dados:
         1. Ordenação Reversa (Reverse Sorting): Os achados são ordenados do final para o início 
-           (`reverse=True` baseado no índice `start`). Isso é um requisito arquitetural obrigatório para evitar
-           o *deslocamento de índices* (offset shift); se substituíssemos do começo para o fim, a alteração no tamanho 
-           da string invalidaria as posições `start`/`end` dos achados subsequentes.
+           (`reverse=True` baseado no índice `start`). Isso evita o deslocamento de índices (*offset shift*) 
+           durante as substituições sucessivas; caso contrário, alterar o tamanho do texto no início invalidaria 
+           as posições dos achados subsequentes.
         2. Mutabilidade de Strings em Python: Como strings são imutáveis no Python, o texto é convertido 
-           temporariamente em uma lista de caracteres (`list(text)`), permitindo substituições diretas por fatiamento 
-           (slice assignment) em tempo O(K), e posteriormente convertido de volta para string via `"".join()`.
+           temporariamente em uma lista de caracteres (`list(text)`), permitindo substituições rápidas 
+           por fatiamento (*slice assignment*) em tempo eficiente $O(K)$, e posteriormente reconvertido para string via `"".join()`.
         """
         # Ordena os achados da maior posição para a menor (fim para o início do texto)
         sorted_findings = sorted(findings, key=lambda x: x["start"], reverse=True)
